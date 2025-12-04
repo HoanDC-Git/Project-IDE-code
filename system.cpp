@@ -10,13 +10,14 @@
 #define Carousel_Motor_Step_Pin       54
 #define Carousel_Motor_Dir_Pin        55
 #define Carousel_Motor_En_Pin         38
-#define Carousel_Motor_LimitSwitch_Pin 3
+#define Carousel_Motor_Home_Pin       2   // X+
+#define Carousel_Motor_Countshelf_Pin 3   // X-
 
 // Động cơ Gantry Y (Trục Y trên RAMPS)
 #define Gantry_MotorY_Step_Pin        60
 #define Gantry_MotorY_Dir_Pin         61
 #define Gantry_MotorY_En_Pin          56
-#define Gantry_MotorY_LimitSwitch_Pin 14
+#define Gantry_MotorY_LimitSwitch_Pin 14  // Y-
 
 // Động cơ Gantry Z1 (Trục Z trên RAMPS)
 #define Gantry_MotorZ1_Step_Pin       46
@@ -26,11 +27,11 @@
 #define Gantry_MotorZ2_Step_Pin       26
 #define Gantry_MotorZ2_Dir_Pin        28
 #define Gantry_MotorZ2_En_Pin         24
-#define Gantry_MotorZ_LimitSwitch_Pin 18
+#define Gantry_MotorZ_LimitSwitch_Pin 18  // Z-
 
 // Servo
 #define Servo_Pin                     4
-#define Servo_LimitSwitch_Pin         15 //##########################//
+#define Servo_LimitSwitch_Pin         15  // Y+
 
 
 // // //---------------------------------------------------------------// // //
@@ -45,9 +46,10 @@ Servo gantryServo;
 // // ---------------- CONSTANTS ----------------- // //
 // Carousel Motor
 const int CAROUSEL_MOTOR_MICROSTEP  = 4;
-const int CAROUSEL_MOTOR_MAXSPEED   = 200;
-const int CAROUSEL_MOTOR_HOMESPEED  = - CAROUSEL_MOTOR_MAXSPEED / 2;
-const long MAX_CAROUSEL_POS         = 123445L; //##############################//
+const int CAROUSEL_MOTOR_MAXSPEED   = -100;
+const int CAROUSEL_MOTOR_HOMESPEED  = CAROUSEL_MOTOR_MAXSPEED;
+const int SHELF_NUMBER              = 8;
+const int DELAY_SAFE                = 2000;
 
 // Gantry Motor Y
 const int GANTRY_MOTORY_MICROSTEP   = 16;
@@ -64,9 +66,7 @@ const long INF                      = 31231025325L;
 
 
 // // ---------------- VARIABLES ----------------- // //
-int last_switch_state = HIGH;
-unsigned long last_debounce_time = 0;
-const unsigned long debounce_delay = 50;
+int carousel_current_shelf          = 10;
 
 
 // // //---------------------------------------------------------------// // //
@@ -81,8 +81,8 @@ void setup() {
   carouselMotor.setMaxSpeed(CAROUSEL_MOTOR_MAXSPEED * CAROUSEL_MOTOR_MICROSTEP);
   carouselMotor.setAcceleration(ACCELERATION * CAROUSEL_MOTOR_MICROSTEP);
   carouselMotor.enableOutputs();
-  pinMode(Carousel_Motor_LimitSwitch_Pin, INPUT_PULLUP);
-
+  pinMode(Carousel_Motor_Home_Pin, INPUT);
+  pinMode(Carousel_Motor_Countshelf_Pin, INPUT);
 
   // --- Cấu hình động cơ Gantry Y ---
   gantryMotorY.setEnablePin(Gantry_MotorY_En_Pin);
@@ -119,137 +119,144 @@ void setup() {
 // // ---------------- PROCEDURE ----------------- // //
 // // ---------------- homing ----------------- // // //
 void homing(){
-  bool carousel_homed = false;
-  bool gantryY_homed = false;
-  bool gantryZ_homed = false;
+  bool carousel_homing_done = false;
+  bool gantryY_homing_done  = false;
+  bool gantryZ_homing_done  = false;
 
   carouselMotor.setSpeed(CAROUSEL_MOTOR_HOMESPEED * CAROUSEL_MOTOR_MICROSTEP);
   gantryMotorY.setSpeed(GANTRY_MOTORY_HOMESPEED * GANTRY_MOTORY_MICROSTEP);
   gantryMotorZ1.setSpeed(GANTRY_MOTORZ_HOMESPEED * GANTRY_MOTORZ_MICROSTEP);
   gantryMotorZ2.setSpeed(GANTRY_MOTORZ_HOMESPEED * GANTRY_MOTORZ_MICROSTEP);
 
-  while (!carousel_homed || !gantryY_homed || !gantryZ_homed) {
-    if (!carousel_homed) {
-      if (digitalRead(Carousel_Motor_LimitSwitch_Pin) == LOW) {
-        carousel_homed = true;
-        carouselMotor.stop();
-        carouselMotor.setCurrentPosition(0);
-      }
-      else { carouselMotor.runSpeed(); }
+  while (!carousel_homing_done || !gantryY_homing_done || !gantryZ_homing_done) {
+    // Carousel logic
+    if (digitalRead(Carousel_Motor_Home_Pin) == 0) {
+      carousel_homing_done = true;
+      carouselMotor.stop();
+    }
+    if (!carousel_homing_done) {
+      carouselMotor.runSpeed();
     }
 
-    if (!gantryY_homed) {
-      if (digitalRead(Gantry_MotorY_LimitSwitch_Pin) == LOW) {
-        gantryY_homed = true;
-        gantryMotorY.stop();
-        gantryMotorY.setCurrentPosition(0);
-      }
-      else { gantryMotorY.runSpeed(); }
+    // Gantry Y logic
+    if (digitalRead(Gantry_MotorY_LimitSwitch_Pin) == 0) {
+      gantryY_homing_done = true;
+      gantryMotorY.stop();
+    }
+    if (!gantryY_homing_done) {
+      gantryMotorY.runSpeed();
     }
 
-    if (!gantryZ_homed) {
-      if (digitalRead(Gantry_MotorZ_LimitSwitch_Pin) == LOW) {
-        gantryZ_homed = true;
-        gantryMotorZ1.stop();
-        gantryMotorZ2.stop();
-        gantryMotorZ1.setCurrentPosition(0);
-        gantryMotorZ2.setCurrentPosition(0);
-      }
-      else {
-        gantryMotorZ1.runSpeed();
-        gantryMotorZ2.runSpeed();
-      }
+    // Gantry Z logic
+    if (digitalRead(Gantry_MotorZ_LimitSwitch_Pin) == 0) {
+      gantryZ_homing_done = true;
+      gantryMotorZ1.stop();
+      gantryMotorZ2.stop();
+    }
+    if (!gantryZ_homing_done) {
+      gantryMotorZ1.runSpeed();
+      gantryMotorZ2.runSpeed();
     }
   }
-  while (digitalRead(Servo_LimitSwitch_Pin) == HIGH) {
-    gantryServo.write(80);
-    delay(10);
+  carousel_current_shelf = 2;
+  gantryMotorY.setCurrentPosition(0);
+  gantryMotorZ1.setCurrentPosition(0);
+  gantryMotorZ2.setCurrentPosition(0);
+  // Servo logic
+  while (digitalRead(Servo_LimitSwitch_Pin) == 1) {
+    gantryServo.write(100);
+    delay(50);
   }
   gantryServo.write(90);
 }
 
 
 // // ---------------- moving ----------------- // // //
-void moving(long carousel_target, long gantryY_target, long gantryZ_target, int servo_state){
+void moving(int carousel_target, long gantryY_target, long gantryZ_target, int servo_state){
+  bool carousel_moving_done     = false;
+  bool gantryY_moving_done      = false;
+  bool gantryZ_moving_done      = false;
+  int count                     = 0;
+  unsigned long current_time    = millis();
+  unsigned long last_debounce_time = 0;
+  int current_sensor_state      = 0;
+  int last_sensor_state         = 0;  // hien dang o vi tri cua mot cai ke
+  int min_debounce              = 500;
 
-  bool need_to_reset_carousel = false;  // Biến kiểm tra có cần reset vị trí carousel hay không
-  bool pushed_limitswitch = false;      // Biến kiểm tra đã chạm công tắc hành trình hay chưa
-  bool is_moving_forward = (carousel_target >= 0);  // Xác định hướng di chuyển của carousel
-
-  // Thiết lập vị trí mục tiêu cho các động cơ
-  if (is_moving_forward) {
-    carouselMotor.moveTo(INF);
-    if (carouselMotor.currentPosition() > carousel_target)  { need_to_reset_carousel = true; }
-  }
-  else{
-    carouselMotor.moveTo(-INF);
-    if (carouselMotor.currentPosition() < abs(carousel_target)) {
-      need_to_reset_carousel = true;
-    }
-  }
+  // Set target
+  carouselMotor.setSpeed(CAROUSEL_MOTOR_MAXSPEED * CAROUSEL_MOTOR_MICROSTEP);
   gantryMotorY.moveTo(gantryY_target);
   gantryMotorZ1.moveTo(gantryZ_target);
   gantryMotorZ2.moveTo(gantryZ_target);
 
-  // Bắt đầu di chuyển các động cơ
-  while (true) {
-    if (digitalRead(Carousel_Motor_LimitSwitch_Pin) != last_switch_state) {
-      last_switch_state = digitalRead(Carousel_Motor_LimitSwitch_Pin);
-      last_debounce_time = millis();
-    }
-    if ((millis() - last_debounce_time) > debounce_delay) {
-      if (last_switch_state == HIGH && !is_moving_forward) {
-        carouselMotor.setCurrentPosition(MAX_CAROUSEL_POS);
-        pushed_limitswitch = true;
-      }
-      else if (last_switch_state == LOW && carousel_target > 0) {
-        carouselMotor.setCurrentPosition(0);
-        pushed_limitswitch = true;
-      }
-    }
-    // Bien kiểm tra trạng thái hoàn thành của các động cơ
-    bool gantry_is_done = (gantryMotorY.distanceToGo() == 0) && (gantryMotorZ1.distanceToGo() == 0);
-    bool carousel_is_done = false;
-
-    if (need_to_reset_carousel) {
-      if (pushed_limitswitch) {
-        if (is_moving_forward) { carousel_is_done = (carouselMotor.currentPosition() >= carousel_target); }
-        else {                   carousel_is_done = (carouselMotor.currentPosition() <= abs(carousel_target)); }
-      }
-    }
-    else{
-      if (is_moving_forward) { carousel_is_done = (carouselMotor.currentPosition() >= carousel_target);}
-      else {                   carousel_is_done = (carouselMotor.currentPosition() <= abs(carousel_target)); }
+  while (!carousel_moving_done || !gantryY_moving_done || !gantryZ_moving_done) {
+    // Carousel logic
+    if (count >= carousel_target) {
+      carousel_moving_done = true;
+      carouselMotor.stop();
     }
 
-    if (gantry_is_done && carousel_is_done) { break; }
+    if (!carousel_moving_done) {
+      current_time = millis();
+      current_sensor_state = digitalRead(Carousel_Motor_Countshelf_Pin);
+      if (current_sensor_state != last_sensor_state) {
+        if (current_sensor_state == 0 && (current_time - last_debounce_time) > min_debounce) {
+          last_sensor_state = current_sensor_state;
+          last_debounce_time = current_time;
+          count ++;
 
-    if (!gantry_is_done) {
+          // Serial.print("Da di qua:"); //Debug, nho cmt khi chay that ////////////////////////
+          // Serial.print(count);
+          // Serial.println(" ke");
+        }
+        else if {
+          last_sensor_state = current_sensor_state;
+          last_debounce_time = current_time;
+        }
+      }
+      carouselMotor.runSpeed();
+    }
+
+    // Gantry Y logic
+    if (gantryMotorY.distanceToGo() == 0) {
+      gantryY_moving_done = true;
+      gantryMotorY.stop();
+    }
+    if (!gantryY_moving_done) {
       gantryMotorY.run();
+    }
+
+    // Gantry Z logic
+    if (gantryMotorZ1.distanceToGo() == 0) {
+      gantryZ_moving_done = true;
+      gantryMotorZ1.stop();
+      gantryMotorZ2.stop();
+    }
+    if (!gantryZ_moving_done) {
       gantryMotorZ1.run();
       gantryMotorZ2.run();
     }
-
-    if (!carousel_is_done) { carouselMotor.run(); }
   }
-  // Dừng tất cả các động cơ
-  carouselMotor.stop();
-  gantryMotorY.stop();
-  gantryMotorZ1.stop();
-  gantryMotorZ2.stop();
-
-  // Điều khiển servo
-  if (servo_state == 1 && digitalRead(Servo_LimitSwitch_Pin) == LOW) {
-    gantryServo.write(100);
-    delay(500);
+  // Servo logic
+  delay(200);
+  if (servo_state == 1 && digitalRead(Servo_LimitSwitch_Pin) == 0) {
+    gantryServo.write(80);
+    delay(1900);
     gantryServo.write(90);
+    delay(200);
   }
-  else if (servo_state == 0 && digitalRead(Servo_LimitSwitch_Pin) == HIGH) {
-    while (digitalRead(Servo_LimitSwitch_Pin) == HIGH) {
-      gantryServo.write(80);
-      delay(10);
+  else if (servo_state == 0 && digitalRead(Servo_LimitSwitch_Pin) == 1) {
+    gantryServo.write(100);
+    unsigned long start_time = millis();
+    while (digitalRead(Servo_LimitSwitch_Pin) == 1)
+    {
+      if (millis() - start_time > 5000) {
+        Serial.println("Servo loi time-out");
+        break;
+      }
     }
     gantryServo.write(90);
+    delay(200);
   }
 }
 
@@ -261,17 +268,22 @@ void loop() {
     String command = Serial.readStringUntil('\n');
     command.trim();
 
-    if (command.equalsIgnoreCase("HOMING")) { homing(); }
+    if (command.equalsIgnoreCase("HOMING")) {
+      homing();
+    }
     else {
       char command_buffer[command.length() + 1];
       command.toCharArray(command_buffer, sizeof(command_buffer));
 
-      long carousel_target = atol(strtok(command_buffer, ":"));
+      int shelf_target = atoi(strtok(command_buffer, ":"));
+      int carousel_target = (shelf_target - carousel_current_shelf + SHELF_NUMBER) % SHELF_NUMBER;
       long gantryY_target = atol(strtok(NULL, ":"));
       long gantryZ_target = atol(strtok(NULL, ":"));
       int servo_state = atoi(strtok(NULL, ":"));
       moving(carousel_target, gantryY_target, gantryZ_target, servo_state);
+      carousel_current_shelf = shelf_target;
     }
-    Serial.println("DONE:");
+    Serial.print("DONE:");
+    Serial.println(carousel_current_shelf);
   }
 }
