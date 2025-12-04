@@ -11,7 +11,7 @@
 #define Gantry_MotorY_Step_Pin        60
 #define Gantry_MotorY_Dir_Pin         61
 #define Gantry_MotorY_En_Pin          56
-#define Gantry_MotorY_LimitSwitch_Pin 14
+#define Gantry_MotorY_LimitSwitch_Pin 14  //Y-
 
 // Động cơ Gantry Z1 (Trục Z trên RAMPS)
 #define Gantry_MotorZ1_Step_Pin       46
@@ -21,11 +21,11 @@
 #define Gantry_MotorZ2_Step_Pin       26
 #define Gantry_MotorZ2_Dir_Pin        28
 #define Gantry_MotorZ2_En_Pin         24
-#define Gantry_MotorZ_LimitSwitch_Pin 18
+#define Gantry_MotorZ_LimitSwitch_Pin 18  // Z-
 
 // Servo
 #define Servo_Pin                     4
-#define Servo_LimitSwitch_Pin         15 //##########################//
+#define Servo_LimitSwitch_Pin         19  // Z+
 
 
 // // //---------------------------------------------------------------// // //
@@ -49,7 +49,6 @@ const int GANTRY_MOTORZ_MAXSPEED          = 1000;
 const int GANTRY_MOTORZ_HOMESPEED         = - GANTRY_MOTORZ_MAXSPEED / 2;
 
 const int ACCELERATION                    = 2000;
-const long INF                            = 31231025325L;
 const int STEPS_PER_ROUND                 = 200;
 
 const float GANTRY_Y_PULLEY_DIAMETER      = 24.0;
@@ -57,14 +56,20 @@ const float GANTRY_Y_PULLEY_CIRCUMFERENCE = GANTRY_Y_PULLEY_DIAMETER * 3.14159;
 
 const float GANTRY_Z_PITCH                = 8.0;
 
+// Position
+const float PICKUP_Y                      = 400.0;
+const float PICKUP_Z[]                    = {0.0, 150.0, 250.0};
+const float Z_OOFSET                      = 20.0;
+const float DROPOFF_Y[]                   = {0.0, 100.0, 200.0};
+const float DROPOFF_Z                     = 150.0;
+
 // // ---------------- VARIABLES ----------------- // //
 
 // // //---------------------------------------------------------------// // //
 // // ---------------- SETUP ----------------- // // //
 void setup() {
-  Serial.begin(115200);
-  Serial.println("San sang nhan lenh...");
-
+  Serial.begin(9600);
+  Serial.println("HOMING hoac <pickup>:<dropof>; pickup:1-3, dropoff:1-2");
   // --- Cấu hình động cơ Gantry Y ---
   gantryMotorY.setEnablePin(Gantry_MotorY_En_Pin);
   gantryMotorY.setPinsInverted(false, false, true);
@@ -91,8 +96,6 @@ void setup() {
   gantryServo.attach(Servo_Pin);
   gantryServo.write(90);
   pinMode(Servo_LimitSwitch_Pin, INPUT_PULLUP);
-
-  homing();
 }
 
 
@@ -143,9 +146,9 @@ void homing() {
 // // ---------------- moving ----------------- // // //
 void moving(long gantryY_target, long gantryZ_target, int servo_state) {
 
-  gantryMotorY.moveTo(gantryY_target / GANTRY_Y_PULLEY_CIRCUMFERENCE * STEPS_PER_ROUND * GANTRY_MOTORY_MICROSTEP);
-  gantryMotorZ1.moveTo(gantryZ_target / GANTRY_Z_PITCH * STEPS_PER_ROUND * GANTRY_MOTORZ_MICROSTEP);
-  gantryMotorZ2.moveTo(gantryZ_target / GANTRY_Z_PITCH * STEPS_PER_ROUND * GANTRY_MOTORZ_MICROSTEP);
+  gantryMotorY.moveTo(long(gantryY_target / GANTRY_Y_PULLEY_CIRCUMFERENCE * STEPS_PER_ROUND * GANTRY_MOTORY_MICROSTEP));
+  gantryMotorZ1.moveTo(long(gantryZ_target / GANTRY_Z_PITCH * STEPS_PER_ROUND * GANTRY_MOTORZ_MICROSTEP));
+  gantryMotorZ2.moveTo(long(gantryZ_target / GANTRY_Z_PITCH * STEPS_PER_ROUND * GANTRY_MOTORZ_MICROSTEP));
 
   // Bắt đầu di chuyển các động cơ
   while (gantryMotorY.distanceToGo() != 0 || gantryMotorZ1.distanceToGo() != 0) {
@@ -158,11 +161,12 @@ void moving(long gantryY_target, long gantryZ_target, int servo_state) {
   gantryMotorY.stop();
   gantryMotorZ1.stop();
   gantryMotorZ2.stop();
+  delay(100);
 
   // Điều khiển servo
   if (servo_state == 1 && digitalRead(Servo_LimitSwitch_Pin) == LOW) {
     gantryServo.write(100);
-    delay(500);
+    delay(1000);
     gantryServo.write(90);
   }
   else if (servo_state == 0 && digitalRead(Servo_LimitSwitch_Pin) == HIGH) {
@@ -172,6 +176,7 @@ void moving(long gantryY_target, long gantryZ_target, int servo_state) {
     }
     gantryServo.write(90);
   }
+  delay(100);
 }
 
 
@@ -184,14 +189,39 @@ void loop() {
 
     if (command.equalsIgnoreCase("HOMING")) { homing(); }
     else {
-      char command_buffer[command.length() + 1];
-      command.toCharArray(command_buffer, sizeof(command_buffer));
+      char command_buffer[50];
 
-      long gantryY_target = atol(strtok(command_buffer, ":"));
-      long gantryZ_target = atol(strtok(NULL, ":"));
-      int servo_state     = atoi(strtok(NULL, ":"));
-      moving(gantryY_target, gantryZ_target, servo_state);
+      // Copy chuỗi vào buffer (đảm bảo chuỗi command không quá 50 ký tự)
+      command.toCharArray(command_buffer, 50);
+
+      // --- Debug: In ra chuỗi buffer để kiểm tra xem nó nhận đúng không ---
+      Serial.print("Buffer nhan duoc: ");
+      Serial.println(command_buffer);
+
+      // Tách chuỗi an toàn hơn
+      char* token1 = strtok(command_buffer, ":");
+      char* token2 = strtok(NULL, ":");
+
+      if (token1 != NULL && token2 != NULL) {
+        int pickup        = atoi(token1);
+        int dropoff       = atoi(token2);
+        if ( pickup >= 1 && pickup <=3 && dropoff >= 1 && dropoff <=2) {
+          Serial.print("PICKUP 1-3: "); Serial.println(pickup);
+          Serial.print("DROPOFF 1-2: "); Serial.println(dropoff);
+
+          moving(PICKUP_Y, PICKUP_Z[pickup] - Z_OOFSET, 0);
+          moving(PICKUP_Y, PICKUP_Z[pickup] + Z_OOFSET, 1);
+          moving(PICKUP_Y, PICKUP_Z[pickup] + Z_OOFSET, 0);
+          moving(DROPOFF_Y[dropoff], DROPOFF_Z + Z_OOFSET, 1);
+          moving(DROPOFF_Y[dropoff], DROPOFF_Z - Z_OOFSET, 0);
+        }
+        else {
+          Serial.println("<pickup>:<dropof>; pickup:1-3, dropoff:1-2");
+        }
+      }
+      else {
+        Serial.println("Loi: Sai dinh dang (VD: 1:2)");
+      }
     }
-    Serial.println("DONE:");
   }
 }
